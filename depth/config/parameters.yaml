@@ -1,4 +1,4 @@
-depth_topic          : "/camera/depth/image_raw"
+depth_topic          : "/xtion_pro_cam/depth/image_raw"
 depth_out_image_topic: "/depth_proc/image"
 playback_topics      : false
 display              : false
