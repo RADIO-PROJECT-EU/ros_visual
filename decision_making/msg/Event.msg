@@ -1,3 +1,4 @@
-Header header
-float32 time_needed
-int32 event
+Header 	 header
+int32 	 type
+string   description
+duration duration

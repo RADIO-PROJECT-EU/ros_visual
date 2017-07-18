@@ -5,29 +5,26 @@ Chroma_processing::Chroma_processing()
 {
 	//Getting the parameters specified by the launch file 
 	ros::NodeHandle local_nh("~");
-	local_nh.param("image_topic", image_topic, string("/camera/rgb/image_raw"));
-	local_nh.param("image_out_topic", image_out_topic, string("/chroma_proc/image"));
-	local_nh.param("image_out_dif_topic", image_out_dif_topic, string("/chroma_proc/image_dif"));
-	local_nh.param("project_path",path_, string(""));
-	local_nh.param("playback_topics", playback_topics, false);
-	local_nh.param("display", display, false);
+	local_nh.param("image_topic"		 , image_topic		   ,string("/camera/rgb/image_raw"));
+	local_nh.param("image_out_topic"	 , image_out_topic	   , string("/chroma_proc/image"));
+	local_nh.param("image_out_dif_topic" , image_out_dif_topic , string("/chroma_proc/image_dif"));
+	local_nh.param("project_path"		 , path_  			   , string(""));
+	local_nh.param("playback_topics"	 , playback_topics	   , false);
+	local_nh.param("display"			 , display	 		   , false);
 	
 	if(playback_topics)
 	{
 		ROS_INFO_STREAM_NAMED("Chroma_processing","Subscribing at compressed topics \n"); 
 		
-		image_sub = it_.subscribe(image_topic, 1, 
+		image_sub = it_.subscribe(image_topic, 10, 
 		  &Chroma_processing::imageCb, this, image_transport::TransportHints("compressed"));
     }
     else
-    {
-		// Subscribe to input video feed 
-		image_sub = it_.subscribe(image_topic, 1, &Chroma_processing::imageCb, this);
+		image_sub = it_.subscribe(image_topic, 10, &Chroma_processing::imageCb, this);
 		
-	} 
 	
-	image_pub = it_.advertise(image_out_topic, 1); 
-	image_pub_dif = it_.advertise(image_out_dif_topic, 1); 
+	image_pub 	  = it_.advertise(image_out_topic, 100); 
+	image_pub_dif = it_.advertise(image_out_dif_topic, 100); 
 }
 
 Chroma_processing::~Chroma_processing()
@@ -37,22 +34,21 @@ Chroma_processing::~Chroma_processing()
 	
 }
 
-/* Callback function to handle ros image messages
+/* Callback function to handle ROS image messages
  * 
  * PARAMETERS:
- * 			-the pointer that contains the color image 
- * 			 and its metadata
+ * 			- msg : ROS message that contains the image and its metadata
  * 
  * RETURN: --
  */
 void Chroma_processing::imageCb(const sensor_msgs::ImageConstPtr& msg)
 {
 	
-	cv_bridge::CvImagePtr cv_ptr;
 	int rows;
 	int cols;
 	int channels;
 	int size;
+	cv_bridge::CvImagePtr cv_ptr;
 	
 	try
 	{
@@ -67,7 +63,7 @@ void Chroma_processing::imageCb(const sensor_msgs::ImageConstPtr& msg)
 	cur_rgb = (cv_ptr->image).clone();
 	
 	// contrast fix
-	cur_rgb.convertTo(cur_rgb, -1, 4, 0);
+	cur_rgb.convertTo(cur_rgb, -1, 2, 0);
 	
 	// gamma correction
 	gammaCorrection(cur_rgb);
@@ -85,7 +81,7 @@ void Chroma_processing::imageCb(const sensor_msgs::ImageConstPtr& msg)
 		frameCounter++;
 	}
 	
-	//~ medianBlur(dif_rgb, dif_rgb, 3);
+	//Calculating image difference between the current and previous images
 	frameDif(cur_rgb, ref_rgb, dif_rgb, 255*0.33);
 	ref_rgb = cur_rgb.clone();
 
@@ -95,7 +91,7 @@ void Chroma_processing::imageCb(const sensor_msgs::ImageConstPtr& msg)
 	//Blob detection
 	if(display)
 	{
-		detectBlobs(dif_rgb, rgb_rects, 15);
+		detectBlobs(dif_rgb, rgb_rects, 15, true);
 		
 		Mat temp = dif_rgb.clone();
 	    for(Rect rect: rgb_rects)
@@ -148,9 +144,11 @@ void Chroma_processing::imageCb(const sensor_msgs::ImageConstPtr& msg)
 	
 	has_image = true;
 	
+	//Publish processed image
 	cv_ptr->image = cur_rgb;
 	image_pub.publish(cv_ptr->toImageMsg());
 	
+	//Publish image difference
 	cv_ptr->image = dif_rgb;
 	image_pub_dif.publish(cv_ptr->toImageMsg());
 	
