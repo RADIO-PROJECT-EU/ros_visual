@@ -12,7 +12,6 @@ find_package(catkin REQUIRED COMPONENTS
   vision
 )
 
-find_package(OpenCV REQUIRED)
 
 catkin_package(CATKIN_DEPENDS radio_services)
 
@@ -21,9 +20,7 @@ aux_source_directory(src/ SRC_LIST)
 include_directories(
   include
   /usr/include/
-  /usr/include/libalglib/
   ${catkin_INCLUDE_DIRS}
-  ${OpenCV_INCLUDE_DIRS}
   ${vision_INCLUDE_DIRS}
 )
 
@@ -38,6 +35,5 @@ add_executable(chroma ${SRC_LIST})
 
 target_link_libraries(${PROJECT_NAME} 
   ${catkin_LIBRARIES}
-  ${OpenCV_LIBRARIES}
   ${vision_LIBRARIES}
 )

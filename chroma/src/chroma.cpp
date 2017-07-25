@@ -5,7 +5,7 @@ Chroma_processing::Chroma_processing()
 {
 	//Getting the parameters specified by the launch file 
 	ros::NodeHandle local_nh("~");
-	local_nh.param("image_topic"		 , image_topic		   ,string("/camera/rgb/image_raw"));
+	local_nh.param("image_topic"		 , image_topic		   , string("/camera/rgb/image_raw"));
 	local_nh.param("image_out_topic"	 , image_out_topic	   , string("/chroma_proc/image"));
 	local_nh.param("image_out_dif_topic" , image_out_dif_topic , string("/chroma_proc/image_dif"));
 	local_nh.param("project_path"		 , path_  			   , string(""));
@@ -17,18 +17,18 @@ Chroma_processing::Chroma_processing()
 	{
 		ROS_INFO_STREAM_NAMED("Chroma_processing","Subscribing at compressed topics \n"); 
 		
-		image_sub = it_.subscribe(image_topic, 10, 
+		image_sub = it_.subscribe(image_topic, 1, 
 		  &Chroma_processing::imageCb, this, image_transport::TransportHints("compressed"));
 	}
 	else{
 		if(running){
-			image_sub = it_.subscribe(image_topic, 10, &Chroma_processing::imageCb, this);
+			image_sub = it_.subscribe(image_topic, 1, &Chroma_processing::imageCb, this);
 		}
 	}
 
 	service = local_nh.advertiseService("/ros_visual/chroma/node_state_service", &Chroma_processing::nodeStateCallback, this);
-	image_pub 	  = it_.advertise(image_out_topic, 100);
-	image_pub_dif = it_.advertise(image_out_dif_topic, 100);
+	image_pub 	  = it_.advertise(image_out_topic, 1);
+	image_pub_dif = it_.advertise(image_out_dif_topic, 1);
 	if(!running){
 		ROS_INFO("The node is in \"pause\" state. Use the provided service to start it!");
 	}
@@ -50,10 +50,6 @@ Chroma_processing::~Chroma_processing()
  */
 void Chroma_processing::imageCb(const sensor_msgs::ImageConstPtr& msg)
 {
-	int rows;
-	int cols;
-	int channels;
-	int size;
 	cv_bridge::CvImagePtr cv_ptr;
 	
 	try
@@ -66,45 +62,51 @@ void Chroma_processing::imageCb(const sensor_msgs::ImageConstPtr& msg)
 	  return;
 	}
 
-	cur_rgb = (cv_ptr->image).clone();
+	Mat cur_rgb = (cv_ptr->image);
 	
-	// contrast fix
-	cur_rgb.convertTo(cur_rgb, -1, 2, 0);
+	//~ equalizeHist( cur_rgb, cur_rgb );
+	//~ cur_rgb.convertTo(cur_rgb, -1, 1.2, 0);
+	Ptr<CLAHE> clahe = createCLAHE();
+	clahe->setClipLimit(1.5);
+	clahe->setTilesGridSize(Size(10, 10));
 	
 	// gamma correction
-	gammaCorrection(cur_rgb);
-	
+	gammaCorrection(cur_rgb, 2.5);
+	clahe->apply(cur_rgb, cur_rgb);
 
 	// First run variable initialization 
-	if(frameCounter == -1 )
+	if(ref_rgb.rows == 0)
 	{
 		rows 	 = cur_rgb.rows;
 		cols 	 = cur_rgb.cols;
 		channels = cur_rgb.channels();
 		size 	 = rows*cols*channels;
 		ref_rgb  = cur_rgb.clone();
-		
-		frameCounter++;
 	}
 	
 	//Calculating image difference between the current and previous images
 	frameDif(cur_rgb, ref_rgb, dif_rgb, 255*0.33);
-	ref_rgb = cur_rgb.clone();
 
-	
-	//Display
-	 
-	//Blob detection
+	for(int y = 0; y < 1; ++y)
+	{
+		uchar* cur = cur_rgb.ptr<uchar>(y);
+		uchar* ref = ref_rgb.ptr<uchar>(y);
+		for(int x = 0; x < size; ++x)
+			ref[x] = cur[x]*(1-backFactor)+ ref[x]*backFactor;
+	}
 	if(display)
 	{
-		detectBlobs(dif_rgb, rgb_rects, 15, true);
+		//Blob detection
+		//~ detectBlobs(dif_rgb, rgb_rects, 15, 1, false);
 		
-		Mat temp = dif_rgb.clone();
-		for(Rect rect: rgb_rects)
-			rectangle(temp, rect, 255, 1);
-		rgb_rects.clear();
+		//~ Mat temp = dif_rgb.clone();
+	    //~ for(Rect rect: rgb_rects)
+			//~ rectangle(temp, rect, 255, 1);
+		//~ rgb_rects.clear();
+
 		
-		imshow("dif_rgb", temp);
+		//Display
+		imshow("dif_rgb", ref_rgb);
 		moveWindow("dif_rgb", 0, 0);
 		imshow("cur_rgb", cur_rgb);
 		moveWindow("cur_rgb", 645, 0);
@@ -157,7 +159,6 @@ void Chroma_processing::imageCb(const sensor_msgs::ImageConstPtr& msg)
 	//Publish image difference
 	cv_ptr->image = dif_rgb;
 	image_pub_dif.publish(cv_ptr->toImageMsg());
-	
 }
 
 /**

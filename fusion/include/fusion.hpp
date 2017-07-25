@@ -21,8 +21,8 @@
 #include <utility.hpp>
 #include <vision.hpp>
 
-#include <fusion/FusionMsg.h>
-#include <fusion/Box.h>
+#include <ros_visual_msgs/FusionMsg.h>
+#include <ros_visual_msgs//Box.h>
 
 using namespace std;
 using namespace cv;
@@ -52,9 +52,9 @@ class Fusion_processing
 		image_transport::ImageTransport it_;
 		image_transport::Subscriber image_sub;
 		image_transport::Subscriber depth_sub;
-
+		ros::Time previous_time;
   	
-		Mat depth;
+		Mat depth_Mat;
 		Mat back_Mat;
 		vector<Mat> depth_storage;
 		vector< Rect_<int> > depth_rects;
@@ -90,6 +90,7 @@ class Fusion_processing
 		int verRange 	  = 7; //in pixels
 		int recR 		  = 2;
 		int counter = 0;
+		int max_rank = 0;
 		long curTime ;
 		float backFactor = 0.40;
 		

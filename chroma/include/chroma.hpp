@@ -45,7 +45,6 @@ class Chroma_processing
 		string image_out_dif_topic;
 		
 		
-		Mat cur_rgb;
 		Mat ref_rgb;
 		Mat dif_rgb;
 		
@@ -55,10 +54,13 @@ class Chroma_processing
 		bool display;
 		bool has_image = false;
 		
+		int rows;
+		int cols;
+		int size;
+		int channels;
 		int interval = 5;
-		int frameCounter = -1, myThreshold = 100;
-		
-		float backFactor = 0.40;
+		int myThreshold  = 100;
+		float backFactor = 0.80;
 		
 		long curTime ;
 		

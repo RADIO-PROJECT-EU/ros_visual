@@ -1,4 +1,5 @@
 #include <vision.hpp>
+#include <exception>
 
 /* Detects non-black rectangle areas in a black image. This 
  * to produce ROIS(Regions of interest) for further processing.
@@ -8,40 +9,36 @@
  * 			- src		   : the Mat object that holds the image
  * 			- colour_areas : the rectangles produced 
  * 			- range		   : the starting dimension of each rectangle
- * 			- detect_people: the starting dimension of each rectangle
+ * 			- subsampling  : number of pixels to skip at each iteration
+ * 			- detect_people: filter boxes(unfinished)
  * 
  * RETURN --
  */
-void detectBlobs(Mat& src, vector< Rect_<int> >& colour_areas, int range, bool detect_people)
+void detectBlobs(const Mat& src, vector< Rect_<int> >& colour_areas, int range, int subsampling, bool detect_people)
 {
 	bool flag 	 		   = false;
 	int cols     		   = src.cols;
 	int rows 	 		   = src.rows;
 	int channels 		   = src.channels();
 	int size 			   = cols*rows*channels;
-	float detection_factor = 0.1; //threshold for the 1st fusing phase
-	float merge_factor 	   = 0.1; //threshold for the 2nd fusing phase
 	
 	//Starting from the 1st non-zero pixel it starts forming rectangles (range x range)
 	//and fuses them if their intersection is above a certain threshold.
 	for(int y = 0; y < 1; y++)
 	{
 		const uchar *dif = src.ptr<uchar>(y);
-		for(int x = 0; x < size; x = x + channels)
+		for(int x = 0; x < size; x = x + subsampling*channels)
 		{
 			if(dif[x] != 0)
-			{				
-				int i = (x/channels)%(cols); 
+			{		
+				int i = floor((x/channels)%(cols)); 
 				int j = floor(x/(cols*channels));
 				
-				Rect_<int> removal;
 				//If the rect is out of bounds skip
 				if((i + range >= cols) || (j + range >= rows))
 					continue;
 				
-				removal = Rect(i, j, range , range);
-				if(removal.width < 1 || removal.height < 1)
-					continue;
+				Rect_<int> removal = Rect(i, j, range , range);
 					
 				if(!colour_areas.empty())
 				{
@@ -49,127 +46,116 @@ void detectBlobs(Mat& src, vector< Rect_<int> >& colour_areas, int range, bool d
 					{
 						Rect_<int> rect   = colour_areas[k];
 						Rect all 		  = removal | rect;
-						int temp 		  = removal.y;
-						removal.y 		  = rect.y;
 						Rect intersection = removal & rect;
-						removal.y 		  = temp;
 						int threshold 	  = intersection.area();
 						
-						if(threshold < 1)
-							continue;
-							
-						if(removal.area() < rect.area())
+						if(threshold > 0)
 						{
-							if(threshold > detection_factor*removal.area())
-							{
-								flag = true;
-								colour_areas[k] = all;
-							}
+							flag = true;
+							colour_areas[k] = all;
+							break;
 						}
-						else
-						{
-							if(threshold > detection_factor*rect.area())
-							{
-								flag = true;
-								colour_areas[k] = all;
-							}
-						}
+					
 					}
 					if(!flag)
 						colour_areas.push_back(removal);
 					else
 						flag = false;
-						
-					//In this phase we loop through all the produced rectangles and again try to merge those whose
-					//intersection is above a certain threshold	
-					int end = colour_areas.size();
-					for(int a = 0; a < end; a++) 
-					{
-						for(int b = a + 1; b < end; b++) 
-						{	
-							Rect_<int> removal = colour_areas[a];
-							Rect_<int> rect    = colour_areas[b];
-							
-							Rect all 		  = removal | rect;
-							int temp 		  = removal.y;
-							removal.y 		  = rect.y;
-							Rect intersection = removal & rect;
-							removal.y 		  = temp;
-							int threshold 	  = intersection.area();
-							if(threshold < 1)
-								continue;
-								
-							if(removal.area() < rect.area())
-							{
-								if(threshold > merge_factor*removal.area())
-								{
-									colour_areas[a] = all;
-									colour_areas[b] = colour_areas.back();
-									colour_areas.pop_back();
-									b = a + 1;
-									end--;
-								}
-							}
-							else
-							{
-								if(threshold > merge_factor*rect.area())
-								{
-									colour_areas[a] = all;
-									colour_areas[b] = colour_areas.back();
-									colour_areas.pop_back();
-									b = a + 1;
-									end--;
-								}
-							}
-							
-						}
-					}
-					
-				
 				}
 				else
 					colour_areas.push_back(removal);
 			}
+			
 		}
 	}
-	int end = colour_areas.size();
 	
-	//Filter out erroneous areas (dimensions < 0) that sometimes occur
-	for(int k = 0; k < end; k++)
+	//In this phase we loop through all the produced rectangles and again try to merge those whose
+	//intersection is above a certain threshold	
+	int end = colour_areas.size();	
+	for(int a = 0; a < end; a++) 
 	{
-		float x  	 = colour_areas[k].x;
-		float y 	 = colour_areas[k].y;
-		float width  = colour_areas[k].width;
-		float height = colour_areas[k].height;
-		if((x < 0) || (y < 0) || (height < 0) || (width < 0))
-		{
-			colour_areas[k] = colour_areas.back();
-			colour_areas.pop_back();
-			k   = k < 0? 0: k--;
-			end = end < 0? 0: end--;
+		for(int b = a + 1; b < end; b++) 
+		{	
+			Rect_<int> removal = colour_areas[a];
+			Rect_<int> rect    = colour_areas[b];
+			Rect all 		   = removal | rect;
+			Rect intersection  = removal & rect;
+			int threshold = intersection.area();
+			if(threshold == 0)
+			{
+				int y_distance = 0;
+				if (removal.y < rect.y)
+					y_distance = rect.y - (removal.y + removal.height);
+				else
+					y_distance = removal.y - (rect.y + rect.height);
+				if(y_distance < rows/20)
+				{
+					int y_temp 	 = removal.y;
+					removal.y 	 = rect.y;
+					intersection = removal & rect;
+					threshold 	 = intersection.area();
+					if(threshold == 0)
+					{
+						int x_distance = cols;
+						if (removal.x < rect.x)
+							x_distance = rect.x - (removal.x + removal.width);
+						else
+							x_distance = removal.x - (rect.x + rect.width);
+						
+						
+						float area_thres = max(removal.area(), rect.area());
+						if((x_distance < cols/50) && (all.area() < 2*area_thres))
+						{
+							threshold = 1;
+						}
+					}
+					removal.y = y_temp;
+				}
+			}
 				
+			if(threshold > 0)
+			{
+				colour_areas[a] = all;
+				colour_areas[b] = colour_areas.back();
+				colour_areas.pop_back();
+				a = -1;
+				end--;
+				break;
+			}
+			
 		}
+	}	
+	vector< Rect_<int> >::iterator it;					
+	//Filter out erroneous areas (dimensions < 0) that sometimes occur
+	for(it = colour_areas.begin(); it < colour_areas.end();)
+	{
+		Rect_<int> rect = *it; 
+		float x  	 = rect.x;
+		float y 	 = rect.y;
+		float width  = rect.width;
+		float height = rect.height;
+		if((x < 0) || (y < 0) || (height <= 0) || (width <= 0))
+			it = colour_areas.erase(it);
+		else
+			it++;
 	}
 	
-	end = colour_areas.size();
 	//Filter out areas whose ratio cannot belong to a human
 	if(detect_people)
 	{
-		for(int k = 0; k < end; k++)
+		
+		vector< Rect_<int> >::iterator it;
+		for(it = colour_areas.begin(); it < colour_areas.end();)
 		{
-			float width  = colour_areas[k].width;
-			float height = colour_areas[k].height;
-			float area   = colour_areas[k].area();
+			Rect_<int> rect = *it; 
+			float width  = rect.width;
+			float height = rect.height;
+			float area   = rect.area();
 			float ratio  = width/height;
 			if((ratio < 0.25) || (ratio > 1.5) || (area < cols*rows*0.02))
-			{
-				//~ rectangle(src, colour_areas[k], 0, CV_FILLED);
-				colour_areas[k] = colour_areas.back();
-				colour_areas.pop_back();
-				k--;
-				end--;
-					
-			}
+				it = colour_areas.erase(it);
+			else
+				it++;
 		}
 	}
 	
@@ -189,72 +175,293 @@ void detectBlobs(Mat& src, vector< Rect_<int> >& colour_areas, int range, bool d
  * 			- cur_boxes  : current image rectangles
  * 			- collection : the collection to be populated
  * 			- rank  	 : the initial rank of a new box, 
+ * 			- max_rank  	 : the initial rank of a new box, 
  * 			- threshold  : rectangle comparison threshold
  * 
  * RETURN --
  */
-void track(vector< Rect_<int> >& cur_boxes, People& collection, int rank, float threshold)
+void track(vector< Rect_<int> >& cur_boxes, People& collection, int width, int height, int rank, int max_rank)
 {
-	bool exists = false;
-	float step  = 1.2;
 	
+	float step  = 1.5;
+	vector<bool> updates(collection.tracked_boxes.size(), false);
 	if(!cur_boxes.empty())
 	{	
-		for(int a = 0; a < cur_boxes.size(); a++) 
-		{
-			exists = false;
-			for(int b = 0; b < collection.tracked_boxes.size(); b++) 
+		Rect_<int> all;
+		//We reposition every tracked box with a union of
+		//the boxes that fall in its area 
+		for(int a = 0; a < collection.tracked_boxes.size(); ++a) 
+		{	
+			all = Rect(0,0,0,0);
+			for(vector< Rect_<int> >::iterator it = cur_boxes.begin(); it < cur_boxes.end();) 
 			{
-				Rect intersection = cur_boxes[a] & collection.tracked_boxes[b];
-				int area = intersection.area();	
-				if(cur_boxes[a].area() < collection.tracked_boxes[b].area())
+				Rect_<int> cur_box = *it;
+				Rect intersection = cur_box | collection.tracked_boxes[a];
+				int threshold = intersection.area();	
+				float area_thres = max(cur_box.area(), collection.tracked_boxes[a].area());
+				if(threshold > 0 && threshold < 1.1*area_thres)
 				{
-					if(area > threshold*cur_boxes[a].area())
-					{
-						collection.tracked_boxes[b] = cur_boxes[a];
-						if(collection.tracked_rankings[b] <= 10)
-							collection.tracked_rankings[b] = collection.tracked_rankings[b] + step;
-						exists = true;	
-						break;	
-					}
+					if (all.area() == 0)
+						all = cur_box;
+					else
+						all = cur_box | all;
+					it = cur_boxes.erase(it);
+				}
+				else
+					++it;
+			}
+			
+			//The reposition rules
+			if(all.area() > 0)
+			{
+				float x_new;
+				float y_new;
+				float w_new;
+				float h_new;
+				if(all.area() > collection.tracked_boxes[a].area())
+				{
+					x_new = (all.x + collection.tracked_boxes[a].x)/2;
+					y_new = (all.y  + collection.tracked_boxes[a].y)/2;
+					w_new = (all.width + collection.tracked_boxes[a].width)/2;
+					h_new = (all.height + collection.tracked_boxes[a].height)/2;
 				}
 				else
 				{
-					if(area > threshold*collection.tracked_boxes[b].area())
+						
+					float thresh = 1;
+					float factor = 160; 
+					float power = 5*float(collection.tracked_boxes[a].area())/float(all.area());
+					float x_dif = (all.x - collection.tracked_boxes[a].x);
+					float y_dif = (all.y - collection.tracked_boxes[a].y);
+					float w_dif = (all.width - collection.tracked_boxes[a].width);
+					float h_dif = (all.height - collection.tracked_boxes[a].height);
+					x_new = collection.tracked_boxes[a].x + x_dif/(power);
+					y_new = collection.tracked_boxes[a].y + y_dif/(power);
+					w_new = collection.tracked_boxes[a].width  + (abs((w_dif*(abs(x_dif) + abs(y_dif) + 1))/(factor*(power + 1)))  < thresh? 0 : w_dif* (abs(x_dif) + abs(y_dif) + 1)/(factor*(power + 1)));
+					h_new = collection.tracked_boxes[a].height + (abs((h_dif*(abs(x_dif) + abs(y_dif) + 1))/(factor*(power + 1)))  < thresh? 0 : h_dif* (abs(x_dif) + abs(y_dif) + 1)/(factor*(power + 1)));
+					
+					if(w_new < 0)
+						w_new = 0;
+					if(h_new < 0)
+						h_new = 0;
+				}
+				//Calculate features and diffs not normalized
+				//****************************
+				
+				//Ratio feature
+				float ratio = float(collection.tracked_boxes[a].height)/float(collection.tracked_boxes[a].width);
+				collection.tracked_pos[a].ratio_diff = ratio - collection.tracked_pos[a].ratio;
+				collection.tracked_pos[a].ratio      = ratio;
+				
+				//Area feature
+				float area = w_new*h_new;
+				collection.tracked_pos[a].area_diff = area - collection.tracked_pos[a].area;
+				collection.tracked_pos[a].area      = area;
+				
+				//x_diff and y_diff
+				float x_diff = (x_new - collection.tracked_boxes[a].x)/area;
+				float y_diff = (y_new - collection.tracked_boxes[a].y)/area;
+				collection.tracked_pos[a].x_delta = x_diff - collection.tracked_pos[a].x_diff;
+				collection.tracked_pos[a].y_delta = y_diff - collection.tracked_pos[a].y_diff;
+				collection.tracked_pos[a].x_diff  = x_diff;
+				collection.tracked_pos[a].y_diff  = y_diff;
+				
+				//y_norm
+				float y_norm = y_new/area;
+				collection.tracked_pos[a].y_norm_diff = y_norm - collection.tracked_pos[a].y_norm;
+				collection.tracked_pos[a].y_norm 	  = y_norm;
+				
+				//Distance feature
+				int x1 = (x_new + w_new/2);
+				int y1 = (y_new + h_new/2);
+				int x2 = (collection.tracked_boxes[a].x + collection.tracked_boxes[a].width/2);
+				int y2 = (collection.tracked_boxes[a].y + collection.tracked_boxes[a].height/2);
+				float distance = sqrt(pow(x1 - x2, 2) + pow(y1 - y2, 2))/area;
+				collection.tracked_pos[a].distance_diff = distance - collection.tracked_pos[a].distance;
+				collection.tracked_pos[a].distance      = distance;
+				
+				
+				
+				//assign the new values
+				collection.tracked_boxes[a].x 	   = x_new;
+				collection.tracked_boxes[a].y  	   = y_new;
+				collection.tracked_boxes[a].width  = w_new;
+				collection.tracked_boxes[a].height = h_new;
+				
+				//***************************
+				
+				//check we did not exceed the limits 
+				if(collection.tracked_boxes[a].x + collection.tracked_boxes[a].width > width)
+					collection.tracked_boxes[a].width = width - collection.tracked_boxes[a].x;
+				if(collection.tracked_boxes[a].y + collection.tracked_boxes[a].height > height)
+					collection.tracked_boxes[a].height = height - collection.tracked_boxes[a].y;
+					
+				updates.at(a) = true;	
+			}
+			
+			
+		}
+		for(int a = 0; a < cur_boxes.size(); ++a) 
+		{
+			Position pos;
+			collection.tracked_pos.push_back(pos);
+			collection.tracked_boxes.push_back(cur_boxes[a]);
+			collection.tracked_rankings.push_back(rank + step);
+		}
+		
+		
+		//In this phase we loop through all the produced rectangles and again try to merge those whose
+		//intersection is above a certain threshold	
+		int end = collection.tracked_boxes.size();
+		for(int a = 0; a < end; ++a) 
+		{
+			for(int b = a + 1; b < end; ++b) 
+			{	
+				Rect_<int> removal = collection.tracked_boxes[a];
+				Rect_<int> rect    = collection.tracked_boxes[b];
+				Rect all 		   = removal | rect;
+				
+				int y_distance = height;
+				if (removal.y < rect.y)
+					y_distance = rect.y - (removal.y + removal.height);
+				else
+					y_distance = removal.y - (rect.y + rect.height);
+					
+				Rect intersection;
+				int threshold = 0;
+				if(y_distance < height/20)
+				{
+					int y_temp 	 = removal.y;
+					removal.y 	 = rect.y;
+					intersection = removal & rect;
+					threshold 	 = intersection.area();
+					if (threshold == 0)
 					{
-						collection.tracked_boxes[b] = cur_boxes[a];
-						if(collection.tracked_rankings[b] <= 10)
-							collection.tracked_rankings[b] = collection.tracked_rankings[b] + step;
-						exists = true;	
-						break;	
+						int x_distance = width;
+						if (removal.x < rect.x)
+							x_distance = rect.x - (removal.x + removal.width);
+						else
+							x_distance = removal.x - (rect.x + rect.width);
+						
+						
+						//~ float area_thres = max(removal.area(), rect.area());
+						//~ if((x_distance < width/50) && (all.area() < 2*area_thres))
+						//~ {
+							//~ threshold = 1;
+						//~ }
+					}
+					removal.y 	 = y_temp;
+				}
+				if(threshold > 0)
+				{
+					float rank_dif = abs(collection.tracked_rankings[a] - collection.tracked_rankings[b])/(collection.tracked_rankings[a] + collection.tracked_rankings[b]);
+					float rank_ratio = (collection.tracked_rankings[a] + collection.tracked_rankings[b])/(max_rank);
+					if(rank_ratio < 1.1)
+					{
+						collection.tracked_boxes[a] = all;
+						collection.tracked_boxes[b] = collection.tracked_boxes.back();
+						collection.tracked_boxes.pop_back();
+						
+						collection.tracked_rankings[b] = collection.tracked_rankings.back();
+						collection.tracked_rankings.pop_back();
+						
+						collection.tracked_pos[b] = collection.tracked_pos.back();
+						collection.tracked_pos.pop_back();
+						b=a;
+						--end;
 					}
 				}
 				
 			}
-			if(!exists)
-			{
-				collection.tracked_boxes.push_back(cur_boxes[a]);
-				collection.tracked_rankings.push_back(rank + step);
-			}
-		}
-		for(int a = 0; a < collection.tracked_boxes.size(); a++)
+		}	
+	}	
+	
+	//Update the rankings
+	for(int a = 0; a < collection.tracked_boxes.size(); ++a)
+	{
+		if (updates[a] == true)
 		{
-			collection.tracked_rankings[a] = collection.tracked_rankings[a] - 1;
+			if(collection.tracked_rankings[a] <= max_rank)
+				collection.tracked_rankings[a] = collection.tracked_rankings[a] + step;
 		}
-		for(int a = 0; a < collection.tracked_boxes.size(); a++)
+		collection.tracked_rankings[a] = collection.tracked_rankings[a] - 1;
+	}
+	
+	//Delete those that fall below 0 rank
+	for(vector<float>::iterator rank_it = collection.tracked_rankings.begin(); rank_it < collection.tracked_rankings.end();)
+	{
+		int dist = distance(collection.tracked_rankings.begin(), rank_it);
+		if(*rank_it < rank || collection.tracked_boxes[dist].area() < rank)
 		{
-			if(collection.tracked_rankings[a] <= 0 && collection.tracked_boxes.size() > 0)
-			{
-				collection.tracked_boxes[a]    = collection.tracked_boxes.back();
-				collection.tracked_boxes.pop_back();
-				collection.tracked_rankings[a] = collection.tracked_rankings.back();
-				collection.tracked_rankings.pop_back();
-				a--;
-			}
-			
+			rank_it = collection.tracked_rankings.erase(rank_it);
+			collection.tracked_pos.erase(collection.tracked_pos.begin() + dist);
+			collection.tracked_boxes.erase(collection.tracked_boxes.begin() + dist);
 		}
+		else
+			++rank_it;
 		
 	}
+		
+}
+
+/* Calculates and stores the coordinates(x, y, z) in meters of a rectangle
+ * in respect to the center of the camera.
+ * 
+ * PARAMETERS:
+ * 			- rect   : rectangle to be processed
+ * 			- pos    : object to save the measurements produced
+ * 			- width  : image width
+ * 			- height : image height
+ * 			- Hfield : camera horizontal field of view in degrees
+ * 			- Vfield : camera vertical field of view in degrees
+ * 
+ * RETURN: --
+ * 
+ */
+void calculatePosition(Rect& rect, Position& pos, int width, int height, int Hfield, int Vfield)
+{
+	
+	float hor_x 	= 0.0;
+	float hor_y 	= 0.0;
+	float ver_x 	= 0.0;
+	float ver_y 	= 0.0;
+	float hor_focal = 0.0;
+	float ver_focal = 0.0;
+	float distance  = 0.0;
+	float depth = pos.z;
+	
+	if(depth != 0.0)
+	{
+		
+		//Find the focal length 
+		hor_focal = height / (2 * tan((Vfield/2) * M_PI / 180.0) );
+		ver_focal = width / (2 * tan((Hfield/2) * M_PI / 180.0) );
+		
+		//Transform the pixel x, y in respect to 
+		//the camera center
+		ver_x = rect.x + rect.width/2;
+		if(ver_x > width/2)
+			ver_x = (ver_x - width/2);
+		else
+			ver_x = (-1)*(width/2 - ver_x);
+		
+		ver_y = rect.y + rect.height/2;
+		if(ver_y > height/2)
+			ver_y = (-1)*(ver_y - height/2);
+		else
+			ver_y = (height/2 - ver_y);
+		
+		//Calculate the real world coordinates of the box center
+		hor_y = depth * ver_y / hor_focal;
+		hor_x = depth * ver_x / ver_focal;
+		
+		
+		//Update the position
+		pos.x = hor_x;
+		pos.y = hor_y;
+		
+	}
+	
 }
 
 /* Estimates the foreground by combining static images, works for
@@ -354,52 +561,10 @@ void estimateBackground(Mat& src, Mat& dst, vector<Mat>& storage, int recursion,
  * 
  * RETURN: --
  */
-void frameDif(Mat& src1, Mat& src2, Mat& dst, float threshold)
+void frameDif(const Mat& src1, const Mat& src2, Mat& dst, float thresh)
 {
-	uchar *src;
-	uchar *temp;
-	uchar *dest;
-	Mat temp_Mat;
-	
-	int cols 	 = src1.cols;
-	int rows 	 = src1.rows;
-	int channels = src1.channels();
-	int size	 = cols*rows*channels;
-	int motionCounter = 0;
-	
-	// Absolute dif between our current mat and the previous one 
-	absdiff(src1, src2, temp_Mat);
-	dst = src1.clone();
-	
-	for(int y = 0; y < 1; y++)
-	{
-		src  = src1.ptr<uchar>(y);
-		temp = temp_Mat.ptr<uchar>(y);
-		dest = dst.ptr<uchar>(y);
-		for(int x = 0; x < size; x = x + channels)
-		{ 
-			float all = 0.0;
-			float color[channels];
-			for (int ch = 0; ch < channels; ch++)
-				color[ch] = (float)temp[x + ch];
-				
-			for (int i = 0; i < channels; i++)
-				all += color[i];
-			all /= channels;
-			
-			if(all > threshold)
-			{
-				for (int ch = 0; ch < channels; ch++)
-					dest[x + ch] = src[x + ch]; 
-				motionCounter++;
-			}
-			else
-			{
-				for (int ch = 0; ch < channels; ch++)
-					dest[x + ch] = 0;
-			}
-		}
-	}
+	absdiff(src1, src2, dst);
+	threshold(dst, dst, thresh, 255, 0);
 }
 
 /* Image gamma correction 
@@ -409,16 +574,15 @@ void frameDif(Mat& src1, Mat& src2, Mat& dst, float threshold)
  * 
  * RETURN: --
  */
-void gammaCorrection(Mat& src)
+void gammaCorrection(const Mat& src, float factor)
 {
-	double inverse_gamma = 1.0 / 2.2;
-	
-	Mat lut_matrix(1, 256, CV_8UC1 );
-	uchar * ptr = lut_matrix.ptr();
-	for( int i = 0; i < 256; i++ )
-		ptr[i] = (int)( pow( (double) i / 255.0, inverse_gamma ) * 255.0 );
-		
-	LUT( src, lut_matrix, src );
+
+	float inverse_gamma = 1.0/2.5;
+	Mat lut_matrix(256, 1, CV_8UC1);
+	uchar* ptr = lut_matrix.ptr<uchar>(0);
+	for( int i = 0; i < 256; ++i)
+		ptr[i] =  saturate_cast<uchar>(pow(i/255.0, inverse_gamma)*255.0);
+	LUT(src, lut_matrix, src);
 }
 
 

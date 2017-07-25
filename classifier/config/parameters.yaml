@@ -1,0 +1,2 @@
+svm_path    : "/include/GB_Classifier_Radio"
+input_topic : "fusion/results"

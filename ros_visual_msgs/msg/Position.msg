@@ -1,0 +1,13 @@
+float32 depth_std
+float32 z_diff
+float32 z_diff_norm
+float32 ratio 
+float32 ratio_diff
+float32 distance
+float32 distance_diff
+float32 y_norm
+float32 x_diff
+float32 y_diff
+float32 y_norm_diff
+float32 x_delta 
+float32 y_delta 

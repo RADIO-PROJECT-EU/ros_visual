@@ -19,18 +19,22 @@ Fusion_processing::Fusion_processing()
 	local_nh.param("display"		 , display 			, false);
 	local_nh.param("max_depth"		 , max_depth 		, DEPTH_MAX);
 	local_nh.param("min_depth"		 , min_depth 		, DEPTH_MIN);
-
+	local_nh.param("fps"			 , max_rank 		, 30);
+	
 	if(playback_topics)
 	{
 		ROS_INFO_STREAM_NAMED("Fusion_processing","Subscribing at compressed topics \n"); 
-		image_topic += "/compressed";
-		depth_topic += "/compressedDepth";
+		depth_sub = it_.subscribe(depth_topic, 1, &Fusion_processing::depthCb, this, image_transport::TransportHints("compressed"));
     } 
+    else
+    {
+		depth_sub = it_.subscribe(depth_topic, 1, &Fusion_processing::depthCb, this);
+	}
 	
-    image_sub = it_.subscribe(image_dif_topic, 10, &Fusion_processing::chromaCb, this);
-    depth_sub = it_.subscribe(depth_topic, 10, &Fusion_processing::depthCb, this);
+    image_sub = it_.subscribe(image_dif_topic, 1, &Fusion_processing::chromaCb, this);
     
-    results_publisher = local_nh.advertise<fusion::FusionMsg>(results_topic, 100);
+    
+    results_publisher = local_nh.advertise<ros_visual_msgs::FusionMsg>(results_topic, 1);
 	
 	if(create_directory)
     {
@@ -59,68 +63,59 @@ void Fusion_processing::chromaCb(const sensor_msgs::ImageConstPtr& msg)
 	Mat fusion;
 	vector< Rect_<int> > fusion_rects;
 	cv_bridge::CvImagePtr cv_ptr_dif;
-	
-	cv_ptr_dif 	 = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::MONO8);
-	
-	fusion 	 = (cv_ptr_dif->image).clone();
-	cv::threshold(fusion, fusion, 100, 255, THRESH_BINARY);
-	
-	//Detect moving blobs
-	detectBlobs(fusion, fusion_rects, 15, true);
-	
-	//Track blobs
-	track(fusion_rects, people);
-	
-	//Check which tracked box has the highest rank
-	//and draw the boxes for visualization
-	Rect rect;
-	Position pos;
-	int rank  = -1;
-	int index = -1;
-	int end	  = people.tracked_rankings.size();
-	for(int i = 0; i < end; i++)
+	try
 	{
-		people.tracked_pos.push_back(pos);
-		if(people.tracked_rankings[i] > 3)
-		{
-			//~ cout<<people.tracked_boxes[i].x<<" " <<people.tracked_boxes[i].y<<" "<<people.tracked_boxes[i].width<<" "<<people.tracked_boxes[i].height<<endl;
-			people.tracked_pos.push_back(pos);
-			rectangle(fusion, people.tracked_boxes[i], 255, 1);
-			//~ rectangle(chroma, people.tracked_boxes[i], 0, 1);
-			if(rank < people.tracked_rankings[i])
-			{
-				rank = people.tracked_rankings[i];
-				rect = people.tracked_boxes[i];
-				index = i;
-			}
-		}
-		else
-		{
-			people.tracked_boxes[i] = people.tracked_boxes.back();
-			people.tracked_boxes.pop_back();
-			people.tracked_rankings[i] = people.tracked_rankings.back();
-			people.tracked_rankings.pop_back();
-			i--;
-			end--;
-		}
+		cv_ptr_dif 	 = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::MONO8);
+	}
+	catch (cv_bridge::Exception& e)
+	{
+	  ROS_ERROR("cv_bridge exception: %s", e.what());
+	  return;
 	}
 	
-	end	  = people.tracked_boxes.size();
-	for(int i = 0; i < end; i++)
+	fusion 	 = (cv_ptr_dif->image);
+	int height 	 = (msg->height);
+	int width 	 = (msg->width);
+	
+	//Detect moving blobs
+	detectBlobs(fusion, fusion_rects, 15, 1, false);
+	
+	//Track blobs
+	track(fusion_rects, people, width, height, 3, 5*max_rank);
+		
+	//Calculate depth, position and features of tracked boxes
+	if(depth_available)
 	{
-		if(rect.width > 0 && depth_available)
+		for(int i = 0; i < people.tracked_boxes.size(); ++i)
 		{
-			Mat depth_rect = depth(people.tracked_boxes[i]);
+			Mat depth_rect = depth_Mat(people.tracked_boxes[i]);
 			try
 			{
-				//Estimate its depth
-				people.tracked_pos[i].z = calculateDepth(depth_rect, people.tracked_boxes[i]);
+				//Calculating depth 
+				float depth = calculateDepth(depth_rect, people.tracked_pos[i]);
+				
+				//Calculating z_diff feature
+				people.tracked_pos[i].z_diff = depth - people.tracked_pos[i].z;
+				
+				if(depth != 0)
+					people.tracked_pos[i].z = depth;
+				
+				//Calculating Std of depth feature
+				absdiff(depth_rect, people.tracked_pos[i].z, depth_rect);
+				people.tracked_pos[i].depth_std = sum(depth_rect)[0]/(depth_rect.rows*depth_rect.cols); 
+				
+				
+				//Visualize depth mat
+				//~ Mat res;
+				//~ depth = calculateDepth(depth_rect);
+				//~ depthToGray(depth_rect, res, 0, max_depth);
+				//~ imshow("depth", res);
+				//~ moveWindow("depth", 645, 0);
 			}
 			catch(exception& e)
 			{
 				printf("%s %s", "Calculate depth failed: ", e.what());
 			}
-			
 			
 			try
 			{
@@ -132,66 +127,73 @@ void Fusion_processing::chromaCb(const sensor_msgs::ImageConstPtr& msg)
 				printf("%s %s", "Calculate position failed: ", e.what());
 			}
 		}
+		
+		
 	}
-	
-	
 	
 	
 	if(display)
 	{
-		//~ //For the box with the highest rank
-		//~ //Filter the image according to the estimated depth and visualize it
-		//~ Mat depth_rect = depth(rect);
-		//~ Mat depth_filtered(depth.rows, depth.cols, CV_8UC1);
-		//~ depth_filtered = Scalar(0);
+		/*
+		//For the box with the highest rank
+		//Filter the image according to the estimated depth and visualize it
+		Mat depth_rect = depth(rect);
+		Mat depth_filtered(depth.rows, depth.cols, CV_8UC1);
+		depth_filtered = Scalar(0);
 		
-		//~ for(int i = 0; i < depth_rect.rows; i++)
-		//~ {
-			//~ float* cur = depth_rect.ptr<float>(i);
-			//~ for(int j = 0; j < depth_rect.cols; j++)
-			//~ {   
-				//~ if(abs(cur[j] - people.tracked_pos[index].z) > 300)
-					//~ cur[j] = 0;
-			//~ }   
-		//~ }
-		//~ depthToGray(depth_rect, depth_rect, min_depth, max_depth);
+		for(int i = 0; i < depth_rect.rows; i++)
+		{
+			float* cur = depth_rect.ptr<float>(i);
+			for(int j = 0; j < depth_rect.cols; j++)
+			{   
+				if(abs(cur[j] - people.tracked_pos[index].z) > 300)
+					cur[j] = 0;
+			}   
+		}
+		depthToGray(depth_rect, depth_rect, min_depth, max_depth);
 		
-		//~ depth_rect.copyTo(depth_filtered(people.tracked_boxes[index]));
+		depth_rect.copyTo(depth_filtered(people.tracked_boxes[index]));
 		
-		//~ imshow("fusion", fusion);
-		//~ moveWindow("fusion", 0, 0);
-		//~ imshow("depth_filt", depth_filtered);
-		//~ moveWindow("depth_filt", 645, 550);
-		//~ imshow("chroma", chroma);
-		//~ moveWindow("chroma", 0, 550);
-		//~ waitKey(1);
+		for(Rect rect: fusion_rects)
+			rectangle(fusion, rect, 255, 1);
+		*/
+		for(int i = 0; i < people.tracked_boxes.size(); ++i)
+		{
+			rectangle(fusion, people.tracked_boxes[i], 255, 1);
+		}
+		imshow("fusion", fusion);
+		moveWindow("fusion", 0, 0);
+		
+		waitKey(1);
 	}
-	//~ cout<<"X:  "<<people.tracked_pos[index].x<<endl;
-	//~ cout<<"Y:  "<<people.tracked_pos[index].y<<endl;
-	//~ cout<<"Depth:  "<<people.tracked_pos[index].z<<endl;
-	//~ cout<<"Height:  "<<people.tracked_pos[index].height<<endl;
-	//~ cout<<"Distance:  "<<people.tracked_pos[index].distance<<endl;
-	//~ cout<<endl;
 	
 	
-	ros::Time time = cv_ptr_dif->header.stamp;
-	
+	ros::Time time = ros::Time::now();
 	//Write csv file
 	if(write_csv)
 		writeCSV(people, session_path, time);
 
 	//Publish results
 	publishResults(people, time);
-
-	
+	previous_time = time;
 }
 
 void Fusion_processing::depthCb(const sensor_msgs::ImageConstPtr& msg)
 {
 	cv_bridge::CvImagePtr cv_ptr_depth;
+	
+	try
+	{
+		cv_ptr_depth    = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_32FC1);
+		
+	}
+	catch (cv_bridge::Exception& e)
+	{
+	  ROS_ERROR("cv_bridge exception: %s", e.what());
+	  return;
+	}
 	depth_available = true;
-	cv_ptr_depth = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_32FC1);
-	depth 		 = (cv_ptr_depth->image).clone();
+	depth_Mat 		= (cv_ptr_depth->image);
 }
 
 
@@ -209,35 +211,47 @@ void Fusion_processing::depthCb(const sensor_msgs::ImageConstPtr& msg)
 void Fusion_processing::writeCSV(People& collection, string path, ros::Time time)
 {		
 	ofstream storage(path + "/fusion.csv" ,ios::out | ios::app );
-	if (!collection.tracked_boxes.empty())
+	if(!collection.tracked_boxes.empty())
 	{
-
-		for(int i = 0; i < collection.tracked_boxes.size() ; i++) 
+		float time_interval  = (time - previous_time).toSec();
+		for(int i = 0; i < collection.tracked_boxes.size(); ++i) 
 		{
-			
-			Rect box = collection.tracked_boxes[i];
-			Position pos = collection.tracked_pos[i];
-			storage
-				<<time<<"\t"
-				<<i<<"\t"
-				<<box.x<<"\t"
-				<<box.y<<"\t"
-				<<box.width<<"\t"
-				<<box.height<<"\t"
-				<<pos.x<<"\t"
-				<<pos.y<<"\t"
-				<<pos.z<<"\t"
-				<<pos.top<<"\t"
-				<<pos.height<<"\t"
-				<<pos.distance<<
-			endl;
+			float rank = collection.tracked_rankings[i];
+			if(rank > 4)
+			{
+				Rect box = collection.tracked_boxes[i];
+				Position pos = collection.tracked_pos[i];
+				storage
+					<<time<<"\t"
+					<<i<<"\t"
+					<<box.x<<"\t"
+					<<box.y<<"\t"
+					<<box.width<<"\t"
+					<<box.height<<"\t"
+					<<pos.ratio<<"\t"
+					<<pos.ratio_diff/time_interval<<"\t"
+					<<pos.distance/time_interval<<"\t"
+					<<pos.distance_diff/time_interval<<"\t"
+					<<pos.x_diff/time_interval<<"\t"
+					<<pos.x_delta/time_interval<<"\t"
+					<<pos.y_diff/time_interval<<"\t"
+					<<pos.y_delta/time_interval<<"\t"
+					<<pos.y_norm<<"\t"
+					<<pos.y_norm_diff/time_interval<<"\t"
+					<<pos.z_diff/time_interval<<"\t"
+					<<abs(pos.z_diff)/time_interval<<"\t"
+					<<pos.depth_std<<
+				endl;
+			}
+			else
+			{
+				storage<<time<<endl;
+			}
 		}
 	}
 	else
 	{
-		storage
-			<<time<<"\t"<<
-		endl;
+		storage<<time<<endl;
 	}
 	storage.close();
 }
@@ -255,29 +269,39 @@ void Fusion_processing::writeCSV(People& collection, string path, ros::Time time
 void Fusion_processing::publishResults(People& collection, ros::Time time){
 	if (!collection.tracked_boxes.empty())
 	{
-		fusion::FusionMsg fmsg;
+		ros_visual_msgs::FusionMsg fmsg;
 
 		fmsg.header.stamp = time;
 		fmsg.header.frame_id = camera_frame;
-		
-		for(int i = 0; i < collection.tracked_boxes.size() ; i++) 
+		float time_interval  = (time - previous_time).toSec();
+		for(int i = 0; i < collection.tracked_boxes.size() ; ++i) 
 		{
+			
 			Rect box = collection.tracked_boxes[i];
 			Position pos = collection.tracked_pos[i];
 			
-			fusion::Box box_;
+			ros_visual_msgs::Box box_;
 			
 			box_.id = i;
 			box_.rect.x = box.x;
 			box_.rect.y = box.y;
 			box_.rect.width = box.width;
 			box_.rect.height = box.height;
-			box_.pos.x = pos.x;
-			box_.pos.y = pos.y;
-			box_.pos.z = pos.z;
-			box_.pos.top = pos.top;
-			box_.pos.height = pos.height;
+			box_.pos.ratio = pos.ratio;
+			box_.pos.ratio_diff = pos.ratio_diff;
 			box_.pos.distance = pos.distance;
+			box_.pos.distance_diff = pos.distance_diff;
+			box_.pos.x_diff = pos.x_diff/time_interval;
+			box_.pos.x_delta = pos.x_delta/time_interval;
+			box_.pos.y_diff = pos.y_diff/time_interval;
+			box_.pos.y_delta = pos.y_delta/time_interval;
+			box_.pos.y_norm = pos.y_norm;
+			box_.pos.y_norm_diff = pos.y_norm_diff/time_interval;
+			box_.pos.z_diff = pos.z_diff;
+			box_.pos.z_diff_norm = pos.z_diff_norm;
+			box_.pos.depth_std = pos.depth_std;
+			
+			
 			fmsg.boxes.push_back(box_);
 		}
 		results_publisher.publish(fmsg);
