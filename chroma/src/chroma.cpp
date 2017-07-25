@@ -30,7 +30,7 @@ Chroma_processing::Chroma_processing()
 	image_pub 	  = it_.advertise(image_out_topic, 1);
 	image_pub_dif = it_.advertise(image_out_dif_topic, 1);
 	if(!running){
-		ROS_INFO("The node is in \"pause\" state. Use the provided service to start it!");
+		ROS_INFO("The chroma node is in \"pause\" state. Use the provided service to start it!");
 	}
 }
 

@@ -13,18 +13,26 @@ Depth_processing::Depth_processing()
     local_nh.param("display"			, display		, false);
     local_nh.param("max_depth"			, max_depth		, DEPTH_MAX);
     local_nh.param("min_depth"			, min_depth		, DEPTH_MIN);
+    local_nh.param("run_on_start"        , running             , false);
     
-    if(playback_topics)
+    if(playback_topics && running)
     {
 	ROS_INFO_STREAM_NAMED("Depth_processing","Subscribing at compressed topics \n"); 
 			
 	depth_sub = it_.subscribe(depth_topic, 1, 
 	   &Depth_processing::depthCb, this, image_transport::TransportHints("compressedDepth"));
     }
-    else	  
-	depth_sub = it_.subscribe(depth_topic, 1, &Depth_processing::depthCb, this);
+    else{
+        if(running){
+            depth_sub = it_.subscribe(depth_topic, 1, &Depth_processing::depthCb, this);
+        }
+    }
 	
+    service = local_nh.advertiseService("/ros_visual/depth/node_state_service", &Depth_processing::nodeStateCallback, this);
     depth_pub = it_.advertise(depth_out_image_topic, 1);
+    if(!running){
+        ROS_INFO("The depth node is in \"pause\" state. Use the provided service to start it!");
+    }
 }
 
 Depth_processing::~Depth_processing()
@@ -179,6 +187,40 @@ void Depth_processing::depthCb(const sensor_msgs::ImageConstPtr& msg)
     depth_pub.publish(cv_ptr_depth->toImageMsg());
 	
 
+}
+
+/**
+ * @brief      This function is called when the corresponding service is called
+ *             and based on the parameter passed, either changes its state and
+ *             returns the new state, or just returns the current state.
+ *             0: Change the current node state to WAITING (false) and return the current node state.
+ *             1: Change the current node state to RUNNING (true), return the current node state (and do not change the mode).
+ *            -1: Return the current node state.
+ *
+ * @param[in]  req   The requested action
+ * @param[in]  res   The response (the current state of the node)
+ *
+ * @return     true if everything was successful, false otherwise.
+ */
+bool Depth_processing::nodeStateCallback(radio_services::InstructionWithAnswer::Request &req, radio_services::InstructionWithAnswer::Response &res){
+    if(req.command == 0 && running){
+        running = false;
+        depth_sub.shutdown();
+        ROS_INFO("Stopped ros_visual/depth!");
+    }
+    else if(req.command == 1 && !running){
+        running = true;
+        if(playback_topics){
+            depth_sub = it_.subscribe(depth_topic, 10, &Depth_processing::depthCb, this, image_transport::TransportHints("compressedDepth"));
+            ROS_INFO("Started ros_visual/depth!");
+        }
+        else{
+            depth_sub = it_.subscribe(depth_topic, 10, &Depth_processing::depthCb, this);
+            ROS_INFO("Started ros_visual/depth!");
+        }
+    }
+    res.answer = running;
+    return true;
 }
 
 int main(int argc, char** argv)

@@ -13,6 +13,7 @@
 #include <limits>
 #include <exception>
 #include <vision.hpp>
+#include "radio_services/InstructionWithAnswer.h"
 
 
 using namespace std;
@@ -30,6 +31,7 @@ class Depth_processing
 		
 		//depth callback
 		void depthCb(const sensor_msgs::ImageConstPtr& msg);
+		bool nodeStateCallback(radio_services::InstructionWithAnswer::Request &req, radio_services::InstructionWithAnswer::Response &res);
 				
 	private:
 	
@@ -38,6 +40,7 @@ class Depth_processing
 		image_transport::ImageTransport it_;
 		image_transport::Subscriber depth_sub;
 		image_transport::Publisher  depth_pub;
+		ros::ServiceServer service;
 			
 		string path_;
 		string depth_topic;
@@ -81,6 +84,7 @@ class Depth_processing
 		
 		Mat back_Mat;
 	
+		bool running = false;
 };
 
 int main(int argc, char** argv);
