@@ -14,7 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
 
 find_package(OpenCV REQUIRED)
 
-catkin_package()
+catkin_package(CATKIN_DEPENDS radio_services)
 
 aux_source_directory(src/ SRC_LIST)
 

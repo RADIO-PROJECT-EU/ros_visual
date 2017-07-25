@@ -13,6 +13,7 @@
 #include <limits>
 #include <exception>
 #include <vision.hpp>
+#include "radio_services/InstructionWithAnswer.h"
 
 using namespace std;
 using namespace cv;
@@ -26,6 +27,7 @@ class Chroma_processing
 		
 		//image and depth callbacks
 		void imageCb(const sensor_msgs::ImageConstPtr& msg);
+		bool nodeStateCallback(radio_services::InstructionWithAnswer::Request &req, radio_services::InstructionWithAnswer::Response &res);
 		
 		
 	private:
@@ -35,6 +37,7 @@ class Chroma_processing
 		image_transport::Subscriber image_sub;
 		image_transport::Publisher image_pub;
 		image_transport::Publisher image_pub_dif;
+		ros::ServiceServer service;
 			
 		string path_;
 		string image_topic;
@@ -62,6 +65,8 @@ class Chroma_processing
 		vector<Mat> rgb_storage;
 		
 		Mat back_Mat;
+
+		bool running = false;
 	
 };
 

@@ -11,20 +11,27 @@ Chroma_processing::Chroma_processing()
 	local_nh.param("project_path"		 , path_  			   , string(""));
 	local_nh.param("playback_topics"	 , playback_topics	   , false);
 	local_nh.param("display"			 , display	 		   , false);
+	local_nh.param("run_on_start"		 , running			   , false);
 	
-	if(playback_topics)
+	if(playback_topics && running)
 	{
 		ROS_INFO_STREAM_NAMED("Chroma_processing","Subscribing at compressed topics \n"); 
 		
 		image_sub = it_.subscribe(image_topic, 10, 
 		  &Chroma_processing::imageCb, this, image_transport::TransportHints("compressed"));
-    }
-    else
-		image_sub = it_.subscribe(image_topic, 10, &Chroma_processing::imageCb, this);
-		
-	
-	image_pub 	  = it_.advertise(image_out_topic, 100); 
-	image_pub_dif = it_.advertise(image_out_dif_topic, 100); 
+	}
+	else{
+		if(running){
+			image_sub = it_.subscribe(image_topic, 10, &Chroma_processing::imageCb, this);
+		}
+	}
+
+	service = local_nh.advertiseService("/ros_visual/chroma/node_state_service", &Chroma_processing::nodeStateCallback, this);
+	image_pub 	  = it_.advertise(image_out_topic, 100);
+	image_pub_dif = it_.advertise(image_out_dif_topic, 100);
+	if(!running){
+		ROS_INFO("The node is in \"pause\" state. Use the provided service to start it!");
+	}
 }
 
 Chroma_processing::~Chroma_processing()
@@ -43,7 +50,6 @@ Chroma_processing::~Chroma_processing()
  */
 void Chroma_processing::imageCb(const sensor_msgs::ImageConstPtr& msg)
 {
-	
 	int rows;
 	int cols;
 	int channels;
@@ -94,7 +100,7 @@ void Chroma_processing::imageCb(const sensor_msgs::ImageConstPtr& msg)
 		detectBlobs(dif_rgb, rgb_rects, 15, true);
 		
 		Mat temp = dif_rgb.clone();
-	    for(Rect rect: rgb_rects)
+		for(Rect rect: rgb_rects)
 			rectangle(temp, rect, 255, 1);
 		rgb_rects.clear();
 		
@@ -154,10 +160,44 @@ void Chroma_processing::imageCb(const sensor_msgs::ImageConstPtr& msg)
 	
 }
 
+/**
+ * @brief      This function is called when the corresponding service is called
+ *             and based on the parameter passed, either changes its state and
+ *             returns the new state, or just returns the current state.
+ *             0: Change the current node state to WAITING (false) and return the current node state.
+ *             1: Change the current node state to RUNNING (true), return the current node state (and do not change the mode).
+ *            -1: Return the current node state.
+ *
+ * @param[in]  req   The requested action
+ * @param[in]  res   The response (the current state of the node)
+ *
+ * @return     true if everything was successful, false otherwise.
+ */
+bool Chroma_processing::nodeStateCallback(radio_services::InstructionWithAnswer::Request &req, radio_services::InstructionWithAnswer::Response &res){
+	if(req.command == 0 && running){
+		running = false;
+		image_sub.shutdown();
+		ROS_INFO("Stopped ros_visual/chroma!");
+	}
+	else if(req.command == 1 && !running){
+		running = true;
+		if(playback_topics){
+			image_sub = it_.subscribe(image_topic, 10, &Chroma_processing::imageCb, this, image_transport::TransportHints("compressed"));
+			ROS_INFO("Started ros_visual/chroma!");
+		}
+		else{
+			image_sub = it_.subscribe(image_topic, 10, &Chroma_processing::imageCb, this);
+			ROS_INFO("Started ros_visual/chroma!");
+		}
+	}
+	res.answer = running;
+	return true;
+}
+
 int main(int argc, char** argv)
 {
 	ros::init(argc, argv, "chroma");
 	Chroma_processing ip;
-	ros::spin();	
+	ros::spin();
 	return 0;
 }

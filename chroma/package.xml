@@ -43,6 +43,7 @@
 
   <depend>roscpp</depend>
   <depend>vision</depend>
+  <depend>radio_services</depend>
   
 
   <!-- The export tag contains other, unspecified, tags -->
