@@ -20,15 +20,18 @@ Fusion_processing::Fusion_processing()
 	local_nh.param("max_depth"		 , max_depth 		, DEPTH_MAX);
 	local_nh.param("min_depth"		 , min_depth 		, DEPTH_MIN);
 	local_nh.param("fps"			 , max_rank 		, 30);
+	local_nh.param("use_depth"		 , use_depth 		, false);
 	
-	if(playback_topics)
-	{
-		ROS_INFO_STREAM_NAMED("Fusion_processing","Subscribing at compressed topics \n"); 
-		depth_sub = it_.subscribe(depth_topic, 1, &Fusion_processing::depthCb, this, image_transport::TransportHints("compressed"));
-    } 
-    else
-    {
-		depth_sub = it_.subscribe(depth_topic, 1, &Fusion_processing::depthCb, this);
+	if(use_depth){
+		if(playback_topics)
+		{
+			ROS_INFO_STREAM_NAMED("Fusion_processing","Subscribing at compressed topics \n"); 
+			depth_sub = it_.subscribe(depth_topic, 1, &Fusion_processing::depthCb, this, image_transport::TransportHints("compressed"));
+	    } 
+	    else
+	    {
+			depth_sub = it_.subscribe(depth_topic, 1, &Fusion_processing::depthCb, this);
+		}
 	}
 	
     image_sub = it_.subscribe(image_dif_topic, 1, &Fusion_processing::chromaCb, this);

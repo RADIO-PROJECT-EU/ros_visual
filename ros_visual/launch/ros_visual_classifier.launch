@@ -5,7 +5,7 @@
 	<arg name="image_topic"  	default="/radio_cam/rgb/image_raw"  />
 	<arg name="depth_topic"  	default="/radio_cam/depth/image_raw"/>
 	<arg name="display"  		default="false" 				 />
-	<arg name="compressed" 		default="false" 				 />
+	<arg name="compressed" 		default="true" 				 />
 	<arg name="use_depth" 		default="false" 				 />
 	<arg name="fps" 			default="30" 					 />
 	
@@ -31,7 +31,7 @@
 		<rosparam file="$(find fusion)/config/parameters.yaml" command="load" />
 		<param name="playback_topics" value="$(arg compressed)"  />
 		<param name="project_path"    value="$(find ros_visual)" />
-		<param name="display" 		  value="true"     />
+		<param name="display" 		  value="false"     />
 		<param name="depth_topic"     value="$(arg depth_topic)" 	  />
 		<param name="use_depth" 	  value="$(arg use_depth)"     />
 		<param name="fps" 	  		  value="$(arg fps)"     />

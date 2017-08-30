@@ -76,6 +76,7 @@ class Fusion_processing
 		bool write_csv;
 		bool has_image = false;
 		bool depth_available = false;
+		bool use_depth = false;
 		
 		int Hfield 		  = 58;
 		int Vfield 		  = 45;
